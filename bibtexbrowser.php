@@ -1,10 +1,10 @@
 <?php /* bibtexbrowser: publication lists with bibtex and PHP
-<!--this is version v20130226 -->
+<!--this is version v__GITHUB__ -->
 URL: http://www.monperrus.net/martin/bibtexbrowser/ 
 Feedback & Bug Reports: martin.monperrus@gmail.com
 
 (C) 2013 Matthieu Guillaumin
-(C) 2006-2012 Martin Monperrus
+(C) 2006-2013 Martin Monperrus
 (C) 2005-2006 The University of Texas at El Paso / Joel Garcia, Leonardo Ruiz, and Yoonsik Cheon
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License as
@@ -17,8 +17,16 @@ License, or (at your option) any later version.
 // added on Wednesday, June 01 2011, bug found by Carlos Bras
 if (!defined('BIBTEXBROWSER')) {
 // this if block ends at the very end of this file, after all class and function declarations.
-define('BIBTEXBROWSER','v20130206');
+define('BIBTEXBROWSER','v__GITHUB__');
 
+// support for configuration
+// you may have bibtexbrowser_configure('ENCODING', 'latin1) in bibtexbrowser.local.php
+global $CONFIGURATION;
+$CONFIGURATION = array();
+function bibtexbrowser_configure($key, $value) { 
+  global $CONFIGURATION;
+  $CONFIGURATION[$key]=$value;
+}
 
 // *************** CONFIGURATION
 // I recommend to put your changes in bibtexbrowser.local.php
@@ -50,20 +58,28 @@ define('BIBTEXBROWSER','v20130206');
 // the default view in {SimpleDisplay,AcademicDisplay,RSSDisplay,BibtexDisplay}
 @define('BIBTEXBROWSER_DEFAULT_DISPLAY','SimpleDisplay');
 
+// the default template
+@define('BIBTEXBROWSER_DEFAULT_TEMPLATE','HTMLTemplate');
+
 // the target frame of menu links
 @define('BIBTEXBROWSER_MENU_TARGET','main'); // might be define('BIBTEXBROWSER_MENU_TARGET','_self'); in bibtexbrowser.local.php 
 
-@define('ABBRV_TYPE','index');// may be year/x-abbrv/key/none/index
+@define('ABBRV_TYPE','index');// may be year/x-abbrv/key/none/index/keys-index
+
+//the default view in the "main" (right hand side) frame
+@define('BIBTEXBROWSER_DEFAULT_FRAME','year=latest'); // year=latest,all and all valid bibtexbrowser queries
 
 // Wrapper to use when we are included by another script 
 @define('BIBTEXBROWSER_EMBEDDED_WRAPPER', 'NoWrapper');
 
-// Wrapper to use when we are included by another script 
+// Main class to use
 @define('BIBTEXBROWSER_MAIN', 'Dispatcher');
 
 // default order functions
-@define('ORDER_FUNCTION','compare_bib_entry_by_year_and_month');
+// Contract Returns < 0 if str1 is less than str2; > 0 if str1 is greater than str2, and 0 if they are equal. 
 // can be @define('ORDER_FUNCTION','compare_bib_entry_by_title');
+@define('ORDER_FUNCTION','compare_bib_entry_by_year');
+@define('ORDER_FUNCTION_FINE','compare_bib_entry_by_month');
 
 // only displaying the n newest entries
 @define('BIBTEXBROWSER_NEWEST',5);
@@ -73,12 +89,24 @@ define('BIBTEXBROWSER','v20130206');
 // do we add [bibtex] links ?
 // suggested by Sascha Schnepp
 @define('BIBTEXBROWSER_BIBTEX_LINKS',true);
+// do we add [pdf] links ?
+@define('BIBTEXBROWSER_PDF_LINKS',true);
+// do we add [doi] links ?
+@define('BIBTEXBROWSER_DOI_LINKS',true);
+// do we add [gsid] links (Google Scholar)?
+@define('BIBTEXBROWSER_GSID_LINKS',true);
 
 // should authors be linked to [none/homepage/resultpage]
 // none: nothing
 // their homepage if defined as @strings
 // their publication lists according to this bibtex 
 @define('BIBTEXBROWSER_AUTHOR_LINKS','homepage');
+
+// BIBTEXBROWSER_LAYOUT defines the HTML rendering layout of the produced HTML
+// may be table/list/ordered_list/definition (for <table>, <ol>, <dl> resp.).
+// for list/ordered_list, the abbrevations are not taken into account (see ABBRV_TYPE)
+// for ordered_list, the index is given by HTML directly (in increasing order)
+@define('BIBTEXBROWSER_LAYOUT','table');
 
 @define('BIBTEXBROWSER_DEBUG',false);
 
@@ -100,13 +128,11 @@ define('BIBTEXBROWSER','v20130206');
 @define('Q_ALL', 'all');
 @define('Q_ENTRY', 'entry');
 @define('Q_KEY', 'key');
-@define('Q_KEYS', 'keys'); // select entries using a JSON array of bibtex keys
-@define('Q_ASSOCKEYS', 'assoc_keys'); // consider Q_KEYS as an associative array, and use the keys of Q_KEYS as item abbrv
+@define('Q_KEYS', 'keys'); // filter entries using a url-encoded, JSON-encoded array of bibtex keys
 @define('Q_SEARCH', 'search');
 @define('Q_EXCLUDE', 'exclude');
 @define('Q_RESULT', 'result');
 @define('Q_ACADEMIC', 'academic');
-@define('Q_BIBLIOGRAPHY', 'bibliography');
 @define('Q_DB', 'bibdb');
 @define('Q_LATEST', 'latest');
 @define('AUTHOR', 'author');
@@ -121,10 +147,6 @@ define('BIBTEXBROWSER','v20130206');
 @define('METADATA_DC',true);
 @define('METADATA_EPRINTS',false);
 
-@define('LAYOUT','table'); // may be table/list/deflist. defines the HTML rendering options (<table>, <ol>, <dl>, resp.). 'list' only works with 'ABBRV_TYPE'='index'.
-@define('ICONS','[]');
-@define('Q_ICONS','icons');
-
 // in embedded mode, we still need a URL for displaying bibtex entries alone
 // this is usually resolved to bibtexbrowser.php
 // but can be overridden in bibtexbrowser.local.php 
@@ -135,6 +157,7 @@ define('BIBTEXBROWSER','v20130206');
 
 define('Q_INNER_AUTHOR', '_author');// internally used for representing the author
 define('Q_INNER_TYPE', 'x-bibtex-type');// used for representing the type of the bibtex entry internally
+@define('Q_INNER_KEYS_INDEX', '_keys-index');// used for storing indices in $_GET[Q_KEYS] array
 
 // for clean search engine links
 // we disable url rewriting
@@ -146,8 +169,14 @@ define('Q_INNER_TYPE', 'x-bibtex-type');// used for representing the type of the
 // we ensure that the pages won't get polluted
 // if future versions of PHP change warning mechanisms...
 
-@error_reporting(E_ERROR);
+@error_reporting(/*pp4php:serl*/E_ALL/*lres*/);
 
+function config_value($key) {
+  global $CONFIGURATION;
+  if (isset($CONFIGURATION[$key])) { return $CONFIGURATION[$key]; }
+  if (defined($key)) { return constant($key); }
+  die('no such configuration: '.$key);
+}
 
 /** parses $_GET[Q_FILE] and puts the result (an object of type BibDataBase) in $_GET[Q_DB].
 See also zetDB().
@@ -155,7 +184,6 @@ See also zetDB().
 function setDB() {
   list($db, $parsed, $updated, $saved) = _zetDB(@$_GET[Q_FILE]);
   $_GET[Q_DB] = $db;
-  $_GET[Q_ICONS] = (array) json_decode(ICONS);
   return $updated;
 }
 
@@ -170,7 +198,7 @@ function zetDB($bibtex_filenames) {
 /** @nodoc */
 function default_message() {
 
-  if (BIBTEXBROWSER_NO_DEFAULT) { return; }
+  if (config_value('BIBTEXBROWSER_NO_DEFAULT')==true) { return; }
 
   ?>
   <div id="bibtexbrowser_message">
@@ -210,8 +238,11 @@ function _zetDB($bibtex_filenames) {
   // ---------------------------- HANDLING unexistent files
   foreach(explode(MULTIPLE_BIB_SEPARATOR, $bibtex_filenames) as $bib) {
   
+    // get file extension to only allow .bib files
+    $ext = pathinfo($bib, PATHINFO_EXTENSION);
     // this is a security protection
-    if (BIBTEXBROWSER_LOCAL_BIB_ONLY && !file_exists($bib)) {
+    if (BIBTEXBROWSER_LOCAL_BIB_ONLY && (!file_exists($bib) || strcasecmp($ext, 'bib') != 0)) {
+
      // to automate dectection of faulty links with tools such as webcheck
      header('HTTP/1.1 404 Not found');
      die('<b>the bib file '.$bib.' does not exist !</b>');
@@ -249,14 +280,14 @@ function _zetDB($bibtex_filenames) {
      && is_readable($compiledbib) 
      && filesize($compiledbib)>0
    ) {
-    $f = fopen($compiledbib,'r+');
+    $f = fopen($compiledbib,'r+'); // some Unix seem to consider flock as a writing operation
     //we use a lock to avoid that a call to bibbtexbrowser made while we write the object loads an incorrect object
     if (flock($f,LOCK_EX)) { 
       $s = filesize($compiledbib);
       $ser = fread($f,$s);
       $db = @unserialize($ser);
       flock($f,LOCK_UN);
-    } else { die("could not get the lock for reading $compiledbib"); }
+    } else { die('could not get the lock'); }
     fclose($f);
     // basic test
     // do we have an correct version of the file
@@ -308,7 +339,7 @@ function _zetDB($bibtex_filenames) {
       fwrite($f,serialize($db));
       flock($f,LOCK_UN);
       $saved = true;
-    } else { die("could not get the lock for writing $compiledbib"); }
+    } else { die('could not get the lock'); }
     fclose($f);
   } // end saving the cached verions
   //else echo '<!-- please chmod the directory containing the bibtex file to be able to keep a compiled version (much faster requests for large bibtex files) -->';
@@ -317,6 +348,14 @@ function _zetDB($bibtex_filenames) {
   return array(&$db, $parse, $updated, $saved);
 } // end function setDB
 
+// internationalization
+function __($msg) {
+  global $BIBTEXBROWSER_LANG;
+  if (isset($BIBTEXBROWSER_LANG[$msg])) { 
+    return $BIBTEXBROWSER_LANG[$msg]; 
+  }
+  return $msg;
+}
 
 // factories
 // may be overridden in bibtexbrowser.local.php
@@ -367,7 +406,7 @@ class StateBasedBibtexParser {
     $this->delegate = &$delegate;
   }
 
-  function parse($bibfilename) {
+  function parse($handle) {
     $delegate = &$this->delegate;
     // STATE DEFINITIONS
     @define('NOTHING',1);
@@ -398,8 +437,6 @@ class StateBasedBibtexParser {
 
     $delegate->beginFile();
 
-    $handle = fopen($bibfilename, "r");
-    if (!$handle) die ('cannot open '.$bibfilename);
     // if you encounter this error "Allowed memory size of xxxxx bytes exhausted"
     // then decrease the size of the temp buffer below
     $bufsize=BUFFERSIZE;
@@ -566,7 +603,6 @@ class StateBasedBibtexParser {
     } // end for
     } // end while
     $delegate->endFile();
-    fclose($handle);
     //$d = &$this->delegate;print_r($d);
   } // end function
 } // end class
@@ -607,6 +643,15 @@ class XMLPrettyPrinter {
   }
 } // end class XMLPrettyPrinter
 
+/** represents @string{k=v} */
+class StringEntry {
+  function StringEntry($k, $v, $filename) {
+    $this->name=$k;
+    $this->value=$v;
+    $this->filename=$filename;
+  }
+} // end class StringEntry
+
 /** builds arrays of BibEntry objects from a bibtex file.
 usage:
 <pre>
@@ -631,16 +676,18 @@ class BibDBBuilder {
 
   var $currentEntry;
 
-  function setData(&$builtdb, &$stringdb) {
-    $this->builtdb = $builtdb;
-    $this->stringdb = $stringdb;
-    return $this;
-  }
+  function build($bibfilename, $handle = NULL) {
+  
+    $this->filename = $bibfilename;    
+    if ($handle == NULL) {
+      $handle = fopen($bibfilename, "r");
+    }
 
-  function build($filename) {
-    $this->filename = $filename;    
+    if (!$handle) die ('cannot open '.$bibfilename);
+    
     $parser = new StateBasedBibtexParser($this);
-    $parser->parse($filename);
+    $parser->parse($handle);
+    fclose($handle);
     //print_r(array_keys(&$this->builtdb));
     //print_r(&$this->builtdb);
   }
@@ -677,24 +724,24 @@ class BibDBBuilder {
   }
 
   function setEntryField($finalkey,$entryvalue) {
-    // is it a constant? then we replace the value
-    // we support advanced features of bibtexbrowser
+    // support for Bibtex concatenation 
     // see http://newton.ex.ac.uk/tex/pack/bibtex/btxdoc/node3.html
-    $entryvalue_array=explode('#',$entryvalue);
+    // (?<! is a negative look-behind assertion, see http://www.php.net/manual/en/regexp.reference.assertions.php
+    $entryvalue_array=preg_split('/(?<!\\\\)#/', $entryvalue);
     foreach ($entryvalue_array as $k=>$v) {
-      // spaces are allowed when using #, they are not taken into account
-      // however # is not istself replaced by a space
+      // spaces are allowed when using # and they are not taken into account
+      // however # is not itself replaced by a space
       // warning: @strings are not case sensitive
       // see http://newton.ex.ac.uk/tex/pack/bibtex/btxdoc/node3.html
       $stringKey=strtolower(trim($v));
       if (isset($this->stringdb[$stringKey]))
       {
         // this field will be formated later by xtrim and latex2html
-        $entryvalue_array[$k]=$this->stringdb[$stringKey];
+        $entryvalue_array[$k]=$this->stringdb[$stringKey]->value;
 
         // we keep a trace of this replacement
         // so as to produce correct bibtex snippets
-        $this->currentEntry->constants[$stringKey]=$this->stringdb[$stringKey];
+        $this->currentEntry->constants[$stringKey]=$this->stringdb[$stringKey]->value;
       }
     }
     $entryvalue=implode('',$entryvalue_array);
@@ -719,10 +766,10 @@ class BibDBBuilder {
   function endEntry($entrysource) {
   
     // we add a timestamp
-    $this->currentEntry->setTimestamp();
+    $this->currentEntry->timestamp();
     
     // we add a key if there is no key
-    if (!$this->currentEntry->hasField(Q_KEY)) {
+    if (!$this->currentEntry->hasField(Q_KEY) && $this->currentEntry->getType()!='string') {
       $this->currentEntry->setField(Q_KEY,md5($this->currentEntry->getTitle().implode('',$this->currentEntry->getRawAuthors())));
     }
     
@@ -743,9 +790,9 @@ class BibDBBuilder {
     // we add it to the string database
     else if ($this->currentEntry->getType()=='string') {
       foreach($this->currentEntry->fields as $k => $v) {
-        $k!=Q_INNER_TYPE and $this->stringdb[$k]=$v;
+        $k!=Q_INNER_TYPE and $this->stringdb[$k]=new StringEntry($k,$v,$this->filename);
       }
-    } 
+    }
     
     // we add it to the database
     else {
@@ -849,7 +896,7 @@ function latex2html($line) {
   $line = char2html($line,'^','o',"circ");
   $line = char2html($line,'^','u',"circ");
 
-  $line = char2html($line,'.','a',"ring");
+  $line = char2html($line,'r','a',"ring");
 
   $line = char2html($line,'c','c',"cedil");
   $line = char2html($line,'v','s',"caron");
@@ -862,7 +909,11 @@ function latex2html($line) {
   $line = str_replace('\\aa','&aring;', $line);
   $line = str_replace('\\AA','&Aring;', $line);
 
-  // clean out extra tex curly brackets, usually used for preserving capitals
+  $line = str_replace('\\l','&#322',$line);
+  $line = str_replace('\\L','&#321',$line);
+  $line = str_replace('\\k{a}','&#261',$line); 
+
+// clean out extra tex curly brackets, usually used for preserving capitals
   $line = str_replace('}','', $line);
   $line = str_replace('{','', $line);
 
@@ -941,7 +992,7 @@ class BibEntry {
   }
   
   /** Adds timestamp to this object */
-  function setTimestamp() {
+  function timestamp() {
     $this->timestamp = time();
   }
   /** Returns the timestamp of this object */
@@ -957,7 +1008,9 @@ class BibEntry {
 
   /** Sets the key of this bib entry. */
   function setKey($value) {
-    $this->setField(Q_KEY,$value);
+    // Slashes are not allowed in keys because they don't play well with web servers
+    // if url-rewriting is used
+    $this->setField(Q_KEY,str_replace('/','-',$value));
   }
 
   /** Sets a field of this bib entry. */
@@ -988,7 +1041,7 @@ class BibEntry {
   
   function setIndex($index) { $this->index = $index; }
 
-  /** Tries to build a good URL for this entry */
+  /** Tries to build a good URL for this entry. The URL should be absolute (better for the generated RSS) */
   function getURL() {
     if (defined('BIBTEXBROWSER_URL_BUILDER')) {
       $f = BIBTEXBROWSER_URL_BUILDER;
@@ -999,81 +1052,11 @@ class BibEntry {
     return BIBTEXBROWSER_URL.'?'.createQueryString(array(Q_KEY=>$this->getKey(), Q_FILE=>$this->filename));
   }
 
-  /** Tries to build a good absolute URL for this entry */
-  function getAbsoluteURL() {
-    if (defined('BIBTEXBROWSER_URL_BUILDER')) {
-      $f = BIBTEXBROWSER_URL_BUILDER;
-      return $f($this);
-    }
-    return "http://".$_SERVER['HTTP_HOST'].dirname($_SERVER['SCRIPT_NAME']).'/'.$this->getURL();
-  }
-
-  /** Read the bibtex field $bibfield and return a link with icon or text
-   * e.g. given the bibtex entry: @article{myarticle, pdf={myarticle.pdf}},
-   * $bibtexentry->getLink('pdf') creates a link to myarticle.pdf using the text '[pdf]' or the pdf icon specified in the bibtex file (cf. getIconOrTxt)
-   * getLink($bibfield,$icon,$def) specifies the icon key $icon and default text $def.
-  */
-  function getLink($bibfield,$icon=NULL,$def=NULL) {
-    if ($icon==NULL) { $icon=$bibfield; }
-    $str = $this->getIconOrTxt($icon,$def);
-    if ($this->hasField($bibfield)) {
-       return ' <a'.(BIBTEXBROWSER_BIB_IN_NEW_WINDOW?' target="_blank" ':'').' href="'.$this->getField($bibfield).'">'.$str.'</a>';
-    }
-    return '';
-  }
-
-  /* a few specializations of getLink */
-
-  /** returns a "[url]" link if relevant. modified to exploit the new method, while keeping backward compatibility */ 
+  /** returns a "[pdf]" link if relevant */
   function getUrlLink() {
-    return $this->getLink('url');
-  }
-
-  /** returns a "[bib]" link if relevant */ 
-  function getBibLink() {
-    $bibstr = $this->getIconOrTxt('bib');
-    $href = 'href="'.$this->getURL().'"';
-    $link = "<a".(BIBTEXBROWSER_BIB_IN_NEW_WINDOW?' target="_blank" ':'')." class=\"biburl\" title=\"".$this->getKey()."\" {$href}>$bibstr</a>";
-    return $link;
-  }
-
-
-  /** DOI are a special kind of links, where the url depends on the doi */
-  function getDoiLink() {
-    $str = $this->getIconOrTxt('doi');
-    if ($this->hasField('doi')) {
-        return ' <a href="http://dx.doi.org/'.$this->getField('doi').'">'.$str.'</a>';
-    }
-    return '';
-  } 
-
-  /** GS are a special kind of links, where the url depends on the google scholar id */
-  function getGSLink() {
-    $str = $this->getIconOrTxt('gsc','cites');
-    // Google Scholar ID
-    if ($this->hasField('gsid')) {
-        return ' <a href="http://scholar.google.com/scholar?cites='.$this->getField("gsid").'">'.$str.'</a>';
-    }
+    if ($this->hasField('url')) return ' <a'.(BIBTEXBROWSER_BIB_IN_NEW_WINDOW?' target="_blank" ':'').' href="'.$this->getField('url').'">[pdf]</a>';
     return '';
   }
-
-  /** replace [$ext] with an icon whose url is defined in a string
-   *  e.g. getIconOrTxt('pdf') will show the icon defined in $_GET[Q_ICONS]['pdf'] or print '[pdf]'
-   *  or   getIconOrTxt('pdf','paper') will show the icon defined by $_GET[Q_ICONS]['pdf'] or print '[paper]'
-   * The replacement text is also used if the url does not point to a valid file (using the "alt" property of the "img" html tag)
-   */
-  function getIconOrTxt($ext,$def=NULL) {
-    if ($def==NULL) { $def=$ext; }
-    $icons = $_GET[Q_ICONS]; 
-    if ( array_key_exists($ext,$icons) ) { 
-      $str='<img class="icon" src="'.$icons[$ext].'" alt="['.$def.']" title="'.$def.'"/>';
-    } else {
-      $str='['.$def.']';
-    }
-    return $str;
-  }
-
-
 
   /** Reruns the abstract */
   function getAbstract() {
@@ -1252,16 +1235,6 @@ class BibEntry {
     return $this->formatAuthor($authors[0]) . $etal;
   }
 
-  /**
-  * Returns a compacted string form of author names by throwing away
-  * all author names except for the first one and appending ", et al."
-  */
-  function getVeryCompactedAuthors(){
-    $authors = $this->getRawAuthors();
-    $etal = count($authors) > 1 ? ', et al.' : '';
-    list($firstname, $lastname) = splitFullName($authors[0]);
-    return $lastname . $etal;
-  }
 
   /** add the link to the homepage if it is defined in a string
    *  e.g. @string{hp_MartinMonperrus="http://www.monperrus.net/martin"}
@@ -1275,7 +1248,7 @@ class BibEntry {
     // e.g. @STRING{hp_Jean-MarcJézéquel="http://www.irisa.fr/prive/jezequel/"}
     $homepage = strtolower('hp_'.preg_replace('/ /', '', $author));
     if (isset($_GET[Q_DB]->stringdb[$homepage]))
-      $author='<a href="'.$_GET[Q_DB]->stringdb[$homepage].'">'.$author.'</a>';
+      $author='<a href="'.$_GET[Q_DB]->stringdb[$homepage]->value.'">'.$author.'</a>';
     return $author;
   }
 
@@ -1322,20 +1295,33 @@ class BibEntry {
     return $this->fields;
   }
     
-  /** Returns the abbreviation. */
-  function getAbbrv() {
+  /** Returns the raw, undecorated abbreviation depending on ABBRV_TYPE. */
+  function getRawAbbrv() {
     if (ABBRV_TYPE == 'index') return $this->index;
     if (ABBRV_TYPE == 'none') return '';
-    if (ABBRV_TYPE == 'key') return '['.$this->getKey().']';
-    if (ABBRV_TYPE == 'year') return '['.$this->getYear().']';
+    if (ABBRV_TYPE == 'key') return $this->getKey();
+    if (ABBRV_TYPE == 'year') return $this->getYear();
     if (ABBRV_TYPE == 'x-abbrv') {
       if ($this->hasField('x-abbrv')) {return $this->getField('x-abbrv');}
       return $this->abbrv;
     }
-    
+    if (ABBRV_TYPE == 'keys-index') {
+      if (isset($_GET[Q_INNER_KEYS_INDEX])) {return $_GET[Q_INNER_KEYS_INDEX][$this->getKey()]; }
+      return '';
+    }
+
     // otherwise it is a user-defined function in bibtexbrowser.local.php
     $f = ABBRV_TYPE;
     return $f($this);
+  }
+
+  /** Returns the abbreviation, etc [1] if ABBRV_TYPE='index'. */
+  function getAbbrv() {
+    $abbrv = $this->getRawAbbrv();
+    if ( ABBRV_TYPE != 'none' ) {
+       $abbrv = '['.$abbrv.']';
+    }
+    return $abbrv;
   }
 
 
@@ -1378,42 +1364,50 @@ class BibEntry {
 
   /** Outputs HTML line according to layout */
   function toHTML() {
-      switch(LAYOUT) {
-        case 'list': $this->toLI(); break;
-        case 'table': $this->toTR(); break;
-        case 'deflist': $this->toDD(); break;
+      $result = '';
+      switch(BIBTEXBROWSER_LAYOUT) { // open row
+        case 'list':
+          $result .= '<li class="bibline">';
+          break;
+        case 'ordered_list':
+          $result .= '<li class="bibline">';
+          break;
+        case 'table':
+          $result .= '<tr class="bibline"><td class="bibref">';
+          break;
+        case 'definition':
+          $result .= '<dl class="bibline"><dt class="bibref">';
+          if (ABBRV_TYPE=='none') { die ('Cannot define an empty term!'); }
+          break;
       }
+      $result .= $this->anchor();
+      switch(BIBTEXBROWSER_LAYOUT) { // close bibref and open bibitem
+        case 'table':
+          $result .= $this->getAbbrv().'</td><td class="bibitem">';
+          break;
+        case 'definition':
+          $result .= $this->getAbbrv().'</dt><dd class="bibitem">';
+          break;
+      }
+      $result .= bib2html($this);
+      $result .= $this->bib2links();
+      switch(BIBTEXBROWSER_LAYOUT) { // close row
+        case 'list':
+          $result .= '</li>'."\n";
+          break;
+        case 'ordered_list':
+          $result .= '</li>'."\n";
+          break;
+        case 'table':
+          $result .= '</td></tr>'."\n";
+          break;
+        case 'definition':
+          $result .= '</dd></dl>'."\n";
+          break;
+      }
+      return $result;
   }
 
-
-  /** Outputs an HTML line (<tr>)with two TDS inside
-  */
-  function toTR() {
-        echo '<tr class="bibline">';
-        echo '<td  class="bibref">';
-        //echo '<a name="'.$this->getId().'"></a>';
- 
-        echo $this->getAbbrv().'</td> ';
-        echo '<td class="bibitem">';
-        echo bib2html($this);
-        echo "</td></tr>\n";
-  }
-
-
-  /** Outputs an LI line (<li>) with spans for each element, using the value attribute the abbrev. (does not work with x-abbrv) */
-  function toLI() {
-        echo '<li class="bibline" value="'.$this->getAbbrv().'">';
-        echo '<a name="'.$this->getAbbrv().'"></a>';
-        echo bib2html($this);
-        echo "</li>\n";
-  }
-
-  /** Outputs an DL line (<dt>+<dd>) */
-  function toDD() {
-        echo '<dl class="bibline"><dt class="bibref"><a name="'.$this->getAbbrv().'">'.$this->getAbbrv().'</a></dt><dd class="bibitem">';
-        echo bib2html($this);
-        echo "</dd></dl>\n";
-  }
 
   /** Outputs an coins URL: see http://ocoins.info/cobg.html
    * Used by Zotero, mendeley, etc.
@@ -1463,9 +1457,9 @@ class BibEntry {
       $url_parts[]='rft_id='.s3988('info:doi/'.$this->getField("doi"));
     }
 
-    // referrer, the id pf a collection of objects
+    // referrer, the id of a collection of objects
     // see also http://www.openurl.info/registry/docs/pdf/info-sid.pdf    
-    $url_parts[]='rfr_id='.s3988('info:sid/'.$_SERVER['HTTP_HOST'].':'.@$_GET[Q_FILE]);
+    $url_parts[]='rfr_id='.s3988('info:sid/'.@$_SERVER['HTTP_HOST'].':'.@$_GET[Q_FILE]);
 
     $url_parts[]='rft.date='.s3988($this->getYear());
 
@@ -1474,6 +1468,42 @@ class BibEntry {
 
     return '<span class="Z3988" title="'.implode('&amp;',$url_parts).'"></span>';
 
+  }
+
+  /** Returns an anchor for this entry.  */
+  function anchor() {
+        return '<a name="'.$this->getRawAbbrv().'"></a>';
+  }
+
+  /** returns a collection of links for the given bibtex entry
+   *  e.g. [bibtex] [doi][pdf]
+   */
+  function bib2links() {
+    $href = 'href="'.$this->getURL().'"';
+
+    $str = '';
+  
+    if (BIBTEXBROWSER_BIBTEX_LINKS) {
+      // we add biburl and title to be able to retrieve this important information
+      // using Xpath expressions on the XHTML source
+      $str .= " <a".(BIBTEXBROWSER_BIB_IN_NEW_WINDOW?' target="_blank" ':'')." class=\"biburl\" title=\"".$this->getKey()."\" {$href}>[bibtex]</a>";
+    }
+
+    if (BIBTEXBROWSER_PDF_LINKS) {
+      // returns an empty string if no url present
+      $str .= $this->getUrlLink();
+    }
+
+    if (BIBTEXBROWSER_DOI_LINKS && $this->hasField('doi')) {
+      $str .= ' <a href="http://dx.doi.org/'.$this->getField("doi").'">[doi]</a>';
+    }
+
+    // Google Scholar ID
+    if (BIBTEXBROWSER_GSID_LINKS && $this->hasField('gsid')) {
+      $str .= ' <a href="http://scholar.google.com/scholar?cites='.$this->getField("gsid").'">[cites]</a>';
+    }
+
+    return $str;
   }
 
 
@@ -1519,35 +1549,46 @@ class BibEntry {
     $s.=$this->getText();
     return $s;
   }
+  
+  /** returns the first and last page of the entry as an array ([0]->first,  [2]->last) */
+  function getPages() {
+    preg_match('/([0-9]+).*?([0-9]+)/',$this->getField('pages'),$matches);
+    array_shift($matches);
+    return $matches;
+  }
+
+} // enc class BibEntry
+
+/** returns an HTML tag depending on BIBTEXBROWSER_LAYOUT e.g. <TABLE> */
+function get_HTML_tag_for_layout() {
+  switch(BIBTEXBROWSER_LAYOUT) { /* switch for different layouts */
+    case 'list':
+      $tag='ul';
+      break;
+    case 'ordered_list':
+      $tag='ol';
+      break;
+    case 'table':
+      $tag = 'table';
+      break;
+    case 'definition':
+      $tag = 'div';
+      break;
+    default:
+      die('Unknown BIBTEXBROWSER_LAYOUT');
+  }
+  return $tag;
 }
 
 
-function layoutHeaderHTML() {
-    switch(LAYOUT) { /* switch for different layouts */
-      case 'list':
-        echo '<ol class="result">';
-        break;
-      case 'table':
-        echo '<table class="result">';
-        break;
-      case 'deflist':
-        echo '<div class="result">';
-        break;
-    }
+/** prints the header of a layouted HTML, depending on BIBTEXBROWSER_LAYOUT e.g. <TABLE> */
+function print_header_layout() {
+  echo '<' . get_HTML_tag_for_layout() . ' class="result">'."\n";
 }
 
-function layoutFooterHTML() {
-    switch(LAYOUT) {
-      case 'list':
-        echo '</ol>';
-        break;
-      case 'table':
-        echo '</table>';
-        break;
-      case 'deflist':
-        echo '</div>';
-        break;
-    }
+/** prints the footer of a layouted HTML, depending on BIBTEXBROWSER_LAYOUT e.g. </TABLE> */
+function print_footer_layout() {
+  echo '</' . get_HTML_tag_for_layout() . '>';
 }
 
 /** this function encapsulates the user-defined name for bib to HTML*/
@@ -1571,11 +1612,9 @@ function compare_bib_entry_by_mtime($a, $b)
 
 /** compares two instances of BibEntry by year
  */
-function compare_bib_entry_by_year_and_month($a, $b)
-{
-  $year_cmp =  -strcmp($a->getYear(),$b->getYear());
-  if ($year_cmp==0) { return compare_bib_entry_by_month($a, $b);}
-  return $year_cmp;
+function compare_bib_entry_by_year($a, $b)
+{ 
+  return -strcmp($a->getYear(),$b->getYear());
 }
 
 /** compares two instances of BibEntry by title
@@ -1583,6 +1622,13 @@ function compare_bib_entry_by_year_and_month($a, $b)
 function compare_bib_entry_by_title($a, $b)
 {
   return strcmp($a->getTitle(),$b->getTitle());
+}
+
+/** compares two instances of BibEntry by undecorated Abbrv
+ */
+function compare_bib_entry_by_raw_abbrv($a, $b)
+{
+  return strcmp($a->getRawAbbrv(),$b->getRawAbbrv());
 }
 
 
@@ -1645,32 +1691,32 @@ return
   // Books
     array(
       'query' => array(Q_TYPE=>'book|proceedings'),
-      'title' => 'Books'
+      'title' => __('Books')
     ),
   // Book chapters
     array(
       'query' => array(Q_TYPE=>'incollection|inbook'),
-      'title' => 'Book Chapters'
+      'title' => __('Book Chapters')
     ),
   // Journal / Bookchapters
     array(
       'query' => array(Q_TYPE=>'article'),
-      'title' => 'Refereed Articles'
+      'title' => __('Refereed Articles')
     ),
   // conference papers
     array(
       'query' => array(Q_TYPE=>'inproceedings|conference',Q_EXCLUDE=>'workshop'),
-      'title' => 'Refereed Conference Papers'
+      'title' => __('Refereed Conference Papers')
     ),
   // workshop papers
     array(
       'query' => array(Q_TYPE=>'inproceedings',Q_SEARCH=>'workshop'),
-      'title' => 'Refereed Workshop Papers'
+      'title' => __('Refereed Workshop Papers')
     ),
   // misc and thesis
     array(
       'query' => array(Q_TYPE=>'misc|phdthesis|mastersthesis|bachelorsthesis|techreport'),
-      'title' => 'Other Publications'
+      'title' => __('Other Publications')
     )
   );
 }
@@ -1708,13 +1754,13 @@ function DefaultBibliographyStyle(&$bibentry) {
   // now the book title
   $booktitle = '';
   if ($type=="inproceedings") {
-      $booktitle = 'In '.$bibentry->getField(BOOKTITLE); }
+      $booktitle = __('In').' '.$bibentry->getField(BOOKTITLE); }
   if ($type=="incollection") {
-      $booktitle = 'Chapter in '.$bibentry->getField(BOOKTITLE);}
+      $booktitle = __('Chapter in').' '.$bibentry->getField(BOOKTITLE);}
   if ($type=="inbook") {
-      $booktitle = 'Chapter in '.$bibentry->getField('chapter');}
+      $booktitle = __('Chapter in').' '.$bibentry->getField('chapter');}
   if ($type=="article") {
-      $booktitle = 'In '.$bibentry->getField("journal");}
+      $booktitle = __('In').' '.$bibentry->getField("journal");}
 
   //// we may add the editor names to the booktitle
   $editor='';
@@ -1732,16 +1778,16 @@ function DefaultBibliographyStyle(&$bibentry) {
 
   $publisher='';
   if ($type=="phdthesis") {
-      $publisher = 'PhD thesis, '.$bibentry->getField(SCHOOL);
+      $publisher = __('PhD thesis').', '.$bibentry->getField(SCHOOL);
   }
   if ($type=="mastersthesis") {
-      $publisher = 'Master\'s thesis, '.$bibentry->getField(SCHOOL);
+      $publisher = __('Master\'s thesis').', '.$bibentry->getField(SCHOOL);
   }
   if ($type=="bachelorsthesis") {
-      $publisher = 'Bachelor\'s thesis, '.$bibentry->getField(SCHOOL);
+      $publisher = __('Bachelor\'s thesis').', '.$bibentry->getField(SCHOOL);
   }
   if ($type=="techreport") {
-      $publisher = 'Technical report, '.$bibentry->getField("institution");
+      $publisher = __('Technical report').', '.$bibentry->getField("institution");
   }
   
   if ($type=="misc") {
@@ -1755,7 +1801,7 @@ function DefaultBibliographyStyle(&$bibentry) {
   if ($publisher!='') $entry[] = '<span class="bibpublisher">'.$publisher.'</span>';
 
 
-  if ($bibentry->hasField('volume')) $entry[] =  "volume ".$bibentry->getField("volume");
+  if ($bibentry->hasField('volume')) $entry[] =  __('volume').' '.$bibentry->getField("volume");
 
 
   if ($bibentry->hasField(YEAR)) $entry[] = $bibentry->getYear();
@@ -1771,7 +1817,7 @@ function DefaultBibliographyStyle(&$bibentry) {
   }
 
   // add the Coin URL
-  $result .=  "\n".$bibentry->toCoins();
+  $result .=  $bibentry->toCoins();
 
   return $result;
 }
@@ -1883,7 +1929,18 @@ function JanosBibliographyStyle(&$bibentry) {
 // ----------------------------------------------------------------------
 // DISPLAY MANAGEMENT
 // ----------------------------------------------------------------------
-
+/** orders two BibEntry as defined by ORDER_FUNCTION 
+ * (by default compares two instances of BibEntry by year and then month)
+ */
+function compare_bib_entries($bib1, $bib2) {
+  $f1 = ORDER_FUNCTION;
+  $cmp = $f1($bib1, $bib2);
+  if ($cmp ==0) {
+    $f2 = ORDER_FUNCTION_FINE;
+    $cmp = $f2($bib1, $bib2);
+  } 
+  return $cmp;
+}
 
 /** creates a query string given an array of parameter, with all specifities of bibtexbrowser_ (such as adding the bibtex file name &bib=foo.bib
  */
@@ -1897,6 +1954,8 @@ function createQueryString($array_param) {
       // the inverse transformation should also be implemented into query2title
       if($key == Q_INNER_AUTHOR) { $key = Q_AUTHOR; }
       if($key == Q_INNER_TYPE) { $key = Q_TYPE; }
+      if($key == Q_KEYS) { $val = urlencode(json_encode($val)); }
+      if($key == Q_INNER_KEYS_INDEX) {continue;}
       $array_param[$key]=$key .'='. urlencode($val);
  }
  return implode("&amp;",$array_param);
@@ -1966,7 +2025,7 @@ class IndependentYearMenu  {
 function poweredby() {
   $poweredby = "\n".'<div style="text-align:right;font-size: xx-small;opacity: 0.6;" class="poweredby">';
   $poweredby .= '<!-- If you like bibtexbrowser, thanks to keep the link :-) -->';
-  $poweredby .= 'Powered by <a href="http://www.monperrus.net/martin/bibtexbrowser/">bibtexbrowser</a><!--v20121205-->';
+  $poweredby .= 'Powered by <a href="http://www.monperrus.net/martin/bibtexbrowser/">bibtexbrowser</a><!--v__GITHUB__-->';
   $poweredby .= '</div>'."\n";
   return $poweredby;
   }
@@ -2048,7 +2107,7 @@ class MenuManager {
   } 
   
   
-  /** function called back by HTMLWrapper */
+  /** function called back by HTMLTemplate */
   function display() {
   echo $this->searchView().'<br/>';
   echo $this->typeVC().'<br/>';
@@ -2062,7 +2121,7 @@ class MenuManager {
     ?>
     <table>
       <tr>
-        <td class="title">Generated from <?php echo $_GET[Q_FILE]; ?></td>
+        <td class="rheader">Generated from <?php echo $_GET[Q_FILE]; ?></td>
       </tr>
     </table>
     <?php
@@ -2241,9 +2300,6 @@ else $page = 1;
 if (!function_exists('query2title')) {
 /** transforms an array representing a query into a formatted string */
 function query2title(&$query) {
-    // special case
-    if (isset($query[Q_BIBLIOGRAPHY])) return 'Publications in ' . htmlspecialchars($_SERVER['PHP_SELF']);
-
     $headers = array();
     foreach($query as $k=>$v) {
       if($k == Q_INNER_AUTHOR) { $k = 'author'; }
@@ -2253,11 +2309,13 @@ function query2title(&$query) {
         // and we remove the regexp modifiers ^ $
         $v = preg_replace('/[$^]/','',$v); 
       }
-      $headers[$k] = ucwords($k).': '.ucwords(htmlspecialchars($v));
+      if($k == Q_KEYS) { $v=json_encode(array_values($v)); }
+      $headers[$k] = __(ucwords($k)).': '.ucwords(htmlspecialchars($v));
   }
     // special cases
-    if (isset($headers[Q_ALL])) $headers[Q_ALL] = 'Publications in '.htmlspecialchars($_GET[Q_FILE]);
-    if (isset($headers[Q_AUTHOR])) $headers[Q_AUTHOR] = 'Publications of '.htmlspecialchars($_GET[Q_AUTHOR]);
+    if (isset($headers[Q_ALL])) $headers[Q_ALL] = __('Publications in').' '.htmlspecialchars($_GET[Q_FILE]);
+    if (isset($headers[Q_AUTHOR])) $headers[Q_AUTHOR] = __('Publications of')
+                                        .' '.htmlspecialchars($_GET[Q_AUTHOR]);
     return join(' &amp; ',$headers);
 }
 }
@@ -2344,7 +2402,7 @@ class YearDisplay {
       }
       
       if (count($x)>0) {
-        echo '<div  class="btb-header">'.$year.'</div>';
+        echo '<div  class="theader">'.$year.'</div>';
         $delegate->setEntries($x);
         $delegate->display();
       }
@@ -2365,6 +2423,8 @@ usage:
 </pre>
   */
 class SimpleDisplay  {
+ 
+  var $headerCSS = 'sheader';
  
   var $options = array();
   
@@ -2403,7 +2463,7 @@ class SimpleDisplay  {
   /** Displays a set of bibtex entries in an HTML table */
   function display() {
    
-    uasort($this->entries, ORDER_FUNCTION);
+    uasort($this->entries, 'compare_bib_entries');
 
     if ($this->options) {
       foreach($this->options as $fname=>$opt) {
@@ -2418,88 +2478,49 @@ class SimpleDisplay  {
       echo 'Options: '.@implode(',',$this->options).'<br/>';      
     }
     
-    layoutHeaderHTML();
+    print_header_layout();
     
     $count = count($this->entries);
     $i=0;
-    foreach ($this->entries as $bib) {    
-      // by default, index are in decrasing order
+    $pred = NULL;
+    foreach ($this->entries as $bib) {
+      if ($this->changeSection($pred, $bib)) {
+        echo $this->sectionHeader($bib);
+      }
+      // by default, index are in decreasing order
       // so that when you add a publicaton recent , the indices of preceding publications don't change
-      $bib->setIndex('['.($count-($i++)).']');
-      $bib->toHTML();
+      $bib->setIndex($count-($i++));
+      echo $bib->toHTML();
+      
+      $pred = $bib;
     } // end foreach
 
-    layoutFooterHTML();
-  } // end function
-} // end class
-
-
-/** creates an RSS link with text or image depending on the environment */
-function createRSSLink($filter) {
-    // default label
-    $label='[rss]';
-    // auto adaptive code :-)
-    //if (is_file('rss.png')) $label='<img src="rss.png"/>';
-    return '<a href="'.BIBTEXBROWSER_URL.'?'.createQueryString($filter).'&amp;rss" class="rsslink">'.$label.'</a>';
-}
-
-
-/**
-  * Displays the summary information of each bib entries of the
-  * current page. For each entry, this method displays the author,
-  * title; the bib entries are displayed grouped by the
-  * publication years. If the bib list is empty, an error message is
-  * displayed.
-  */
-class DefaultContentStrategy  {
-
-  /** $display: an instance of PagedDisplay */
-  function display(&$display) {
-    // create a year -> entries map to display by years
-    $years = array();
-    foreach ($display->result as $e) {
-      $y =  trim($e->getField(YEAR));
-      $years[$y][$e->getKey()] = $e;
-    }
-    krsort($years);
-
-    layoutHeaderHTML();
-
-    $index = 0;
-    $refnum = count($display->result)-(($display->page-1)*PAGE_SIZE);
-    foreach ($years as $year => $entries) {
-
-      if ($display->isDisplayed($index)) {
-        switch(LAYOUT) { 
-          case 'deflist':
-          case 'list':
-              ?>
-              <div class="date"><?php echo $year; ?></div>
-              <?php
-              break;
-          case 'table':
-              ?>
-              <tr class="date">
-              <td colspan="2" class="header"><?php echo $year; ?></td>
-              </tr>
-              <?php
-              break;
-       } 
-     }
-      // sort by month if present, otherwise by keys (Dupont2008a, Dupont2008b, Dupont2008c)
-      uasort($entries, "compare_bib_entry_by_month");
-      foreach ($entries as $bib) {
-        if ($display->isDisplayed($index)) {
-          $bib->setAbbrv($refnum--);
-          $bib->toHTML();
-        }
-        $index++;
-
-      } // end foreach
-    }
-    layoutFooterHTML();
+    print_footer_layout();
 
   } // end function
+  
+  function changeSection($pred, $bib) {
+  
+    // for the first one we output the header
+    if ($pred == NULL) { return true; }
+    
+    $f = ORDER_FUNCTION;
+    return $f($pred, $bib) != 0;
+  }
+  
+  function sectionHeader($bib) {
+    switch(BIBTEXBROWSER_LAYOUT) { 
+      case 'table':
+        return '<tr><td colspan="2" class="'.$this->headerCSS.'">'.$bib->getYear().'</td></tr>'."\n";
+        break;
+      case 'definition':
+        return '<div class="'.$this->headerCSS.'">'.$bib->getYear().'</div>'."\n";
+        break;
+      default:
+        return '';
+    }
+  }
+  
 } // end class
 
 
@@ -2550,33 +2571,19 @@ class AcademicDisplay  {
    */
   function search2html($query, $title) {
     $entries = $this->db->multisearch($query);
-    
-    uasort($entries, ORDER_FUNCTION);
     if (count($entries)>0) {
-    echo "\n".'<div class="header">'.$title.'</div>'."\n";
-    layoutHeaderHTML();
-
-    // by default the abbreviation is incremented over all 
-    // searches
-    
-    // since we don't know before hand all section, we can not index in decreasing order
-    static $count;
-    if ($count == NULL) { $count = 1; } // init
-    $id = $count;
-    foreach ($entries as $bib) {
-        $bib->setIndex($id++);
-        $bib->toHTML();
-    } // end foreach
-    $count = @$count + count($entries);
-    layoutFooterHTML();
+      echo "\n".'<div class="sheader">'.$title.'</div>'."\n";
     }
-
+    $display = createBasicDisplay();
+    $display->setEntries($entries);
+    $display->headerCSS = 'theader';
+    $display->display();
+    
   }
   
   function display() {
     $this->db = createBibDataBase();
     $this->db->bibdb = $this->entries;
-
 
     foreach (_DefaultBibliographySections() as $section) {
       $this->search2html($section['query'],$section['title']);
@@ -2650,8 +2657,22 @@ class BibEntryDisplay {
     return $this->bib->toCoins().$this->bib->toEntryUnformatted();
   }
 
-  /** Creates metadata for Google Scholar
-   * + a description
+  /** Returns a dictionary of metadata. If the same metadata appears multiple times, it is concatenated with ";"
+   */
+  function metadata_dict() {
+    $result = array();
+    foreach($this->metadata() as $v) {
+      if (!in_array($v[0], $result)) {      
+        $result[$v[0]] = $v[1];
+      } else {
+        $result[$v[0]] .= ';'.$v[1];
+      }
+    }
+    return $result;
+  }
+  
+  /** Returns an array containing the metadata for Google Scholar
+   *    array (array('citation_title', 'foo'), ....)
    * @see http://scholar.google.com/intl/en/scholar/inclusion.html
    * @see http://www.monperrus.net/martin/accurate+bibliographic+metadata+and+google+scholar
    * */
@@ -2659,74 +2680,85 @@ class BibEntryDisplay {
     $result=array();
     
     if (METADATA_GS) {
-    // the description may mix with the Google Scholar tags
-    // we remove it
-    // $result[] = array('description',trim(strip_tags(str_replace('"','',bib2html($this->bib)))));
-    $result[] = array('citation_title',$this->bib->getTitle());
-    $authors = $this->bib->getArrayOfCommaSeparatedAuthors();
-    $result[] = array('citation_authors',implode("; ",$authors));
-    foreach($authors as $author) {
-      $result[] = array('citation_author',$author);
-    }
-    $result[] = array('citation_publication_date',$this->bib->getYear());
-
-    // this page
-    $result[] = array('citation_abstract_html_url','http://'.$_SERVER['HTTP_HOST'].($_SERVER['SERVER_PORT']=='80'?'':$_SERVER['SERVER_PORT']).str_replace('&','&amp;',$_SERVER['REQUEST_URI']));
-    
-    if ($this->bib->hasField("publisher")) {
-      $result[] = array('citation_publisher',$this->bib->getPublisher());
-    }
-
-    // BOOKTITLE: JOURNAL NAME OR PROCEEDINGS
-    if ($this->bib->getType()=="article") { // journal article
-      $result[] = array('citation_journal_title',$this->bib->getField("journal"));
-      $result[] = array('citation_volume',$this->bib->getField("volume"));
-      if ($this->bib->hasField("issue")) {
-        $result[] = array('citation_issue',$this->bib->getField("issue"));
+      // the description may mix with the Google Scholar tags
+      // we remove it
+      // $result[] = array('description',trim(strip_tags(str_replace('"','',bib2html($this->bib)))));
+      $result[] = array('citation_title',$this->bib->getTitle());
+      $authors = $this->bib->getArrayOfCommaSeparatedAuthors();
+      $result[] = array('citation_authors',implode("; ",$authors));
+      foreach($authors as $author) {
+        $result[] = array('citation_author',$author);
       }
-      if ($this->bib->hasField("issn")) {
-        $result[] = array('citation_issue',$this->bib->getField("issn"));
+      
+      // the date 
+      $result[] = array('citation_publication_date',$this->bib->getYear());
+      $result[] = array('citation_date',$this->bib->getYear());
+        $result[] = array('citation_year',$this->bib->getYear());
+
+      if ($this->bib->hasField("publisher")) {
+        $result[] = array('citation_publisher',$this->bib->getPublisher());
       }
-    } 
 
-    if ($this->bib->getType()=="inproceedings" || $this->bib->getType()=="conference") {
-       $result[] = array('citation_conference_title',$this->bib->getField(BOOKTITLE));
-       $result[] = array('citation_conference',$this->bib->getField(BOOKTITLE));
-    }
+      // BOOKTITLE: JOURNAL NAME OR PROCEEDINGS
+      if ($this->bib->getType()=="article") { // journal article
+        $result[] = array('citation_journal_title',$this->bib->getField("journal"));
+        $result[] = array('citation_volume',$this->bib->getField("volume"));
+        if ($this->bib->hasField("number")) {
+          // in bibtex, the issue number is usually in a field "number"
+          $result[] = array('citation_issue',$this->bib->getField("number"));
+        }
+        if ($this->bib->hasField("issue")) {
+          $result[] = array('citation_issue',$this->bib->getField("issue"));
+        }
+        if ($this->bib->hasField("issn")) {
+          $result[] = array('citation_issue',$this->bib->getField("issn"));
+        }
+      } 
 
-    if ($this->bib->getType()=="phdthesis"
-         || $this->bib->getType()=="mastersthesis"
-         || $this->bib->getType()=="bachelorsthesis"
-       )
-    {
-       $result[] = array('citation_dissertation_institution',$this->bib->getField('school'));
-    }
+      if ($this->bib->getType()=="inproceedings" || $this->bib->getType()=="conference") {
+         $result[] = array('citation_conference_title',$this->bib->getField(BOOKTITLE));
+         $result[] = array('citation_conference',$this->bib->getField(BOOKTITLE));
+      }
 
-    if ($this->bib->getType()=="techreport"
-         && $this->bib->hasField("number")
-       )
-    {
-       $result[] = array('citation_technical_report_number',$this->bib->getField('number'));
-    }
+      if ($this->bib->getType()=="phdthesis"
+           || $this->bib->getType()=="mastersthesis"
+           || $this->bib->getType()=="bachelorsthesis"
+         )
+      {
+         $result[] = array('citation_dissertation_institution',$this->bib->getField('school'));
+      }
 
-    if ($this->bib->getType()=="techreport"
-         && $this->bib->hasField("institution")
-       )
-    {
-       $result[] = array('citation_technical_report_institution',$this->bib->getField('institution'));
-    }
+      if ($this->bib->getType()=="techreport"
+           && $this->bib->hasField("number")
+         )
+      {
+         $result[] = array('citation_technical_report_number',$this->bib->getField('number'));
+      }
 
-    // generic
-    if ($this->bib->hasField("doi")) {
-      $result[] = array('citation_doi',$this->bib->getField("doi"));
-    }
+      if ($this->bib->getType()=="techreport"
+           && $this->bib->hasField("institution")
+         )
+      {
+         $result[] = array('citation_technical_report_institution',$this->bib->getField('institution'));
+      }
 
-    if ($this->bib->hasField("url")) {
-      $result[] = array('citation_pdf_url',$this->bib->getField("url"));
-    }
-    }
-    
-    
+      // generic
+      if ($this->bib->hasField("doi")) {
+        $result[] = array('citation_doi',$this->bib->getField("doi"));
+      }
+
+      if ($this->bib->hasField("url")) {
+        $result[] = array('citation_pdf_url',$this->bib->getField("url"));
+      }    
+      
+      if ($this->bib->hasField("pages")) {
+        $pages = $this->bib->getPages();
+        $result[] = array('citation_firstpage',$pages[0]);
+        $result[] = array('citation_lastpage',$pages[1]);
+      }
+
+    } // end Google Scholar
+
     // we don't introduce yet another kind of bibliographic metadata
     // the core bibtex metadata will simply be available as json
     // now adding the pure bibtex with no translation
@@ -2822,6 +2854,7 @@ class BibEntryDisplay {
   }
 }
 
+
 // ----------------------------------------------------------------------
 // DATABASE MANAGEMENT
 // ----------------------------------------------------------------------
@@ -2842,19 +2875,32 @@ class BibDataBase {
   /** A hashtable of constant strings */
   var $stringdb;
 
+  /** A list of file names */
+  var $from_files;
+
   /** Creates a new database by parsing bib entries from the given
    * file. (backward compatibility) */
   function load($filename) {
+    $this->from_files[] = $filename;
     $this->update($filename);
   }
   
   /** Updates a database (replaces the new bibtex entries by the most recent ones) */ 
-  function update($filename) {
+  function update($filename) {  
+    $this->from_files[] = $filename;
+    $this->update_internal($filename, NULL);
+  }
+
+  /** returns true if this file is already loaded in this BibDataBase object */
+  function is_already_loaded($filename) {
+    return in_array($filename, $this->from_files);
+  }
   
+  /** See update */ 
+  function update_internal($resource_name, $resource) {
     $empty_array = array();
     $db = createBibDBBuilder();
-    $db->setData($empty_array, $this->stringdb);
-    $db->build($filename);
+    $db->build($resource_name, $resource);
     
     $this->stringdb = array_merge($this->stringdb, $db->stringdb);
         
@@ -2877,13 +2923,21 @@ class BibDataBase {
     // some entries have been removed
     foreach ($this->bibdb as $e) {
       if (!isset($result[$e->getKey()]) 
-          && $e->filename==$filename // bug reported by Thomas on Dec 4 2012
+          && $e->filename==$resource_name // bug reported by Thomas on Dec 4 2012
          ) {
         //echo 'deleting...<br/>';
         unset($this->bibdb[$e->getKey()]);
       }
     }
-      
+
+    // some @string have been removed
+    foreach ($this->stringdb as $k=>$e) {
+      if (!isset($db->stringdb[$k]) 
+          && $e->filename==$resource_name ) {
+        //echo 'deleting...<br/>';
+        unset($this->stringdb[$e->name]);
+      }
+    }
   }
 
   /** Creates a new empty database */
@@ -3010,22 +3064,10 @@ class BibDataBase {
     if (count($query)<1) {return array();}
     if (isset($query[Q_ALL])) return array_values($this->bibdb);
 
-    if (array_key_exists( Q_KEYS, $query )) {
-      $keylist = (array) $query[Q_KEYS];
-      $reflist = array_flip($keylist);
-      $is_assoc = array_key_exists( Q_ASSOCKEYS, $query ); //array_values($query[Q_KEYS]) !== $query[Q_KEYS];
-      //if ($is_assoc) echo "Assoc";
-      //print_r($keylist);
-    } else {
-      $is_assoc = false;
-    }
-    unset($query[Q_ASSOCKEYS]); // not used for filtering the bibtex entries
-
     $result = array();
 
     foreach ($this->bibdb as $bib) {
         $entryisselected = true;
-        $akey = '';
         foreach ($query as $field => $fragment) {
           $field = strtolower($field);
           if ($field==Q_SEARCH) {
@@ -3053,12 +3095,10 @@ class BibDataBase {
             }
           }
           else if ($field==Q_KEYS) {
-            if ( ! in_array( $bib->getKey(), $keylist ) ) {
-              //echo $bib->getKey() . " not in list<br/>\n";
+            if ( ! in_array( $bib->getKey(), $query[Q_KEYS] ) ) {
               $entryisselected = false;
               break;
             }
-            //echo $bib->getKey() . " in list<br/>\n";
           }
           else {
             if (!$bib->hasPhrase($fragment, $field))  {
@@ -3069,16 +3109,9 @@ class BibDataBase {
 
         }
         if ($entryisselected) {
-          if ( $is_assoc ) {
-              $result[$reflist[$bib->getKey()]] = $bib;
-          } else {
-              $result[] = $bib;
-          }
-        } else {
-          //echo "entry ".$bib->getKey()." not selected\n";
+          $result[] = $bib;
         }
       }
-      //foreach ($result as $ref=>$bib) {echo $ref." => ".$bib->getKey()." ";}
       return $result;
   }
 } // end class
@@ -3097,14 +3130,27 @@ function bibtexbrowserDefaultCSS() {
 .bibpublisher { /* nothing by default */ }
 
 
-.title {
+/* 1st level headers, equivalent H1  */
+.rheader {
   color: #003366;
   font-size: large;
   font-weight: bold;
-  text-align: right;
 }
 
-.btb-header {
+/* 2nd level headers, equivalent H2  */
+.sheader {
+  font-weight: bold;
+  background-color: #003366;
+  color: #ffffff;
+  padding: 2px;
+  margin-bottom: 0px;
+  margin-top: 7px;
+  border-bottom: #ff6633 2px solid;
+
+}
+
+/* 3rd level headers, equivalent H3  */
+.theader {
   background-color: #995124;
   color: #FFFFFF;
   padding: 1px 2px 1px 2px;
@@ -3116,15 +3162,6 @@ function bibtexbrowserDefaultCSS() {
   padding: 1px 2px 1px 2px;
 }
 
-.rheader {
-  font-weight: bold;
-  background-color: #003366;
-  color: #ffffff;
-  padding: 2px;
-  margin-bottom: 10px;
-  border-bottom: #ff6633 2px solid;
-
-}
 .menu {
   font-size: x-small;
   background-color: #EFDDB4;
@@ -3140,14 +3177,22 @@ function bibtexbrowserDefaultCSS() {
   color: #ff6633;
 }
 
+dd {
+  display: inline; /* for <dt> if BIBTEXBROWSER_LAYOUT='definition' */
+}
+
+.bibitem {
+  margin-left:5px;
+}
+
 .bibref {
   padding:7px;
   padding-left:15px;
   vertical-align:text-top; 
+  display: inline; /* for <dt> if BIBTEXBROWSER_LAYOUT='definition' */
 }
 
 .result {
-  padding:0px;
   border: 1px solid #000000;
   margin:0px;
   background-color: #ffffff;
@@ -3209,18 +3254,15 @@ usage:
 <pre>
   $db = zetDB('metrics.bib');
   $dis = new BibEntryDisplay($db->getEntryByKey('Schmietendorf2000'));
-  new HTMLWrapper($dis);
+  new HTMLTemplate($dis);
 </pre>
-*/
-class HTMLWrapper {
-/**
  * $content: an object with methods
       display() 
       getRSS()
       getTitle()
  * $title: title of the page
  */
-function HTMLWrapper(&$content,$metatags=array()/* an array name=>value*/) {
+function HTMLTemplate(&$content,$metatags=array()/* an array name=>value*/) {
 
 // when we load a page with AJAX
 // the HTTP header is taken into account, not the <meta http-equiv>
@@ -3231,7 +3273,7 @@ echo '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=<?php echo ENCODING ?>"/>
-<meta name="generator" content="bibtexbrowser v20130226" />
+<meta name="generator" content="bibtexbrowser v__GITHUB__" />
 <?php 
 // if ($content->getRSS()!='') echo '<link rel="alternate" type="application/rss+xml" title="RSS" href="'.$content->getRSS().'&amp;rss" />'; 
 ?>
@@ -3276,16 +3318,12 @@ if (method_exists($content, 'getTitle')) {
   if (BIBTEXBROWSER_USE_PROGRESSIVE_ENHANCEMENT) {
     javascript();
   }
-
-
 ?>
 </body>
 </html>
 <?php
 //exit;
-} // end constructor
-
-}
+} // end function HTMLTemplate
 
 
 /** does nothing but calls method display() on the content. 
@@ -3296,10 +3334,8 @@ usage:
   new NoWrapper($dis);
 </pre>
 */
-class NoWrapper {
-  function NoWrapper(&$content) {
-    echo $content->display();
-  }
+function NoWrapper(&$content) {
+  echo $content->display();
 }
 
 /** is used to create an subset of a bibtex file.
@@ -3355,7 +3391,7 @@ class PagedDisplay {
   
     /** sets the entries to be shown */
   function setEntries(&$entries) {
-    uasort($entries, ORDER_FUNCTION);
+    uasort($entries, 'compare_bib_entries');
     $this->entries = array_values($entries);
   }
 
@@ -3389,18 +3425,19 @@ class PagedDisplay {
     }
     
     $this->menu($less, $more);    
-    layoutHeaderHTML();
+    print_header_layout();
     for ($i = 0; $i < PAGE_SIZE; $i++) { 
       $index = ($this->page-1)*PAGE_SIZE + $i;
       if (isset($this->entries[$index])) {
         $bib = $this->entries[$index];       
-        $bib->toHTML(); 
+        echo $bib->toHTML();
         
       } else {
         //break;
       }
     } // end foreach
-    layoutFooterHTML();
+    
+    print_footer_layout();
     
     $this->menu($less, $more);    
   }
@@ -3451,8 +3488,8 @@ class RSSDisplay {
     // first strip HTML tags 
     $desc = strip_tags($desc);
   
-    // then decode characters encoded by latex2html
-    $desc= html_entity_decode($desc);
+    // then decode characters encoded by latex2html, preserve ENCODING
+    $desc = html_entity_decode($desc, ENT_COMPAT, ENCODING);
 
     // some entities may still be here, we remove them
     // we replace html entities e.g. &eacute; by nothing
@@ -3494,14 +3531,14 @@ class RSSDisplay {
       <link>http://<?php echo $_SERVER['HTTP_HOST'].htmlentities($_SERVER['REQUEST_URI']);?></link>
       <atom:link href="http://<?php echo $_SERVER['HTTP_HOST'].htmlentities($_SERVER['REQUEST_URI']);?>" rel="self" type="application/rss+xml" />
       <description></description>
-      <generator>bibtexbrowser v20130226</generator>
+      <generator>bibtexbrowser v__GITHUB__</generator>
 
 <?php
       foreach($this->entries as $bibentry) {
          ?>
          <item>
          <title><?php echo $this->text2rss($bibentry->getTitle());?></title>
-         <link><?php echo $bibentry->getAbsoluteURL();?></link>
+         <link><?php echo $bibentry->getURL();?></link>
          <description>
           <?php
             // we are in XML, so we cannot have HTML entitites
@@ -3547,7 +3584,7 @@ class Dispatcher {
   /** the wrapper of selected entries. The default is an HTML wrapper
     *  It could also be a NoWrapper when you include your pub list in your home page
     */
-  var $wrapper = 'HTMLWrapper';
+  var $wrapper = BIBTEXBROWSER_DEFAULT_TEMPLATE;
 
   function Dispatcher() {}
   
@@ -3561,8 +3598,10 @@ class Dispatcher {
       return;
     }
     
+    if (!isset($_GET[Q_FILE])) { die('$_GET[\''.Q_FILE.'\'] is not set!'); }
+
     // first we set the database (load from disk or parse the bibtex file)
-    if (!isset($_GET[Q_DB])) { setDB(); }
+    if (!isset($_GET[Q_DB]) || !$_GET[Q_DB]->is_already_loaded($_GET[Q_FILE])) { setDB(); }
     
     // is the publication list included in another page?
     // strtr is used for Windows where __FILE__ contains C:\toto and SCRIPT_FILENAME contains C:/toto (bug reported by Marco)
@@ -3595,12 +3634,11 @@ class Dispatcher {
        }
        
        // default order
-       //uasort($selectedEntries, ORDER_FUNCTION);
-       //$selectedEntries = array_values($selectedEntries);
+       uasort($selectedEntries, 'compare_bib_entries');
+       $selectedEntries = array_values($selectedEntries);
        
        //echo '<pre>';print_r($selectedEntries);echo '</pre>';
-       
-       
+              
        if ($this->displayer=='') {
          $this->displayer = BIBTEXBROWSER_DEFAULT_DISPLAY;
        }
@@ -3614,8 +3652,7 @@ class Dispatcher {
         $options = json_decode($_GET['dopt'],true);
       }     
        
-      // required for PHP4 to have this intermediate variable
-      
+      // required for PHP4 to have this intermediate variable      
       $x = new $this->displayer();
       
       if (method_exists($x,'setEntries')) {
@@ -3631,7 +3668,8 @@ class Dispatcher {
       }
 
       // should call method display() on $x
-      new $this->wrapper($x);
+      $fun = $this->wrapper;
+      $fun($x);
       
       $this->clearQuery();
     }
@@ -3705,7 +3743,8 @@ class Dispatcher {
   function menu() {
     $menu = createMenuManager();
     $menu->setDB($_GET[Q_DB]);
-    new $this->wrapper($menu,array(array('robots','noindex')));
+    $fun = $this->wrapper;
+    $fun($menu,array(array('robots','noindex')));
     return 'END_DISPATCH';
   }
 
@@ -3731,9 +3770,10 @@ class Dispatcher {
   }
 
   function key() {
+    $entries = array();
+    // case 1: this is a single key
     if ($_GET[Q_DB]->contains($_GET[Q_KEY])) {
-      $bibentry = $_GET[Q_DB]->getEntryByKey($_GET[Q_KEY]);
-      $entries = array($bibentry);
+      $entries[] = $_GET[Q_DB]->getEntryByKey($_GET[Q_KEY]);
       if (isset($_GET['astext'])) {
         $bibdisplay = new BibtexDisplay();
         $bibdisplay->setEntries($entries);
@@ -3741,37 +3781,37 @@ class Dispatcher {
       } else {
         $bibdisplay = createBibEntryDisplay();
         $bibdisplay->setEntries($entries);
-        new $this->wrapper($bibdisplay,$bibdisplay->metadata());
-      }
+        $fun = $this->wrapper;
+        $fun($bibdisplay,$bibdisplay->metadata());
+      }      
       return 'END_DISPATCH';
     }
-    else { nonExistentBibEntryError(); }
+    
+    // case two: multiple keys
+    if (preg_match('/[|,]/',$_GET[Q_KEY])) {
+      $this->query[Q_SEARCH]=str_replace(',','|',$_GET[Q_KEY]);    
+    } else { nonExistentBibEntryError(); } 
   }
-
-  function bibliography() {
-    $this->displayer='BibliographyDisplay';
-    $this->query[Q_ASSOCKEYS]=1;
-  }
-
-  function layout() { $this->query[LAYOUT]=$_GET[LAYOUT]; }
 
   function keys() {
-    if (preg_match('/utf-?8/i',ENCODING)) {
-      // Create array from list of bibtex entries
-      $_GET[Q_KEYS] = json_decode($_GET[Q_KEYS]);
+    // Create array from list of bibtex entries
+    if (get_magic_quotes_gpc()) {
+      $_GET[Q_KEYS] = stripslashes($_GET[Q_KEYS]);
     }
+    $_GET[Q_KEYS] = (array) json_decode(urldecode($_GET[Q_KEYS])); // decode and cast the object into an (associative) array
+    // Make the array 1-based (keeps the string keys unchanged)
+    array_unshift($_GET[Q_KEYS],"__DUMMY__");
+    unset($_GET[Q_KEYS][0]);
+    // Keep a flipped version for efficient search in getRawAbbrv()
+    $_GET[Q_INNER_KEYS_INDEX] = array_flip($_GET[Q_KEYS]);
     $this->query[Q_KEYS]=$_GET[Q_KEYS];
-  }
-
-  function assoc_keys() {
-    $this->query[Q_ASSOCKEYS]=$_GET[Q_ASSOCKEYS];
   }
 
   /** is used to remotely analyzed a situation */
   function diagnosis() {
     header('Content-type: text/plain');
     echo "php version: ".phpversion()."\n";
-    echo "bibtexbrowser version: 20130226\n";
+    echo "bibtexbrowser version: __GITHUB__\n";
     echo "dir: ".decoct(fileperms(dirname(__FILE__)))."\n";
     echo "bibtex file: ".decoct(fileperms($_GET[Q_FILE]))."\n";
     exit;
@@ -3783,13 +3823,13 @@ class Dispatcher {
     <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Frameset//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-frameset.dtd">
     <html  xmlns="http://www.w3.org/1999/xhtml">
     <head>
-    <meta name="generator" content="bibtexbrowser v20130226" />
+    <meta name="generator" content="bibtexbrowser v__GITHUB__" />
     <meta http-equiv="Content-Type" content="text/html; charset=<?php echo ENCODING ?>"/>
     <title>You are browsing <?php echo $_GET[Q_FILE]; ?> with bibtexbrowser</title>
     </head>
     <frameset cols="15%,*">
     <frame name="menu" src="<?php echo '?'.Q_FILE.'='. urlencode($_GET[Q_FILE]).'&amp;menu'; ?>" />
-    <frame name="main" src="<?php echo '?'.Q_FILE.'='. urlencode($_GET[Q_FILE]).'&amp;year=latest'?>" />
+    <frame name="main" src="<?php echo '?'.Q_FILE.'='. urlencode($_GET[Q_FILE]).'&amp;'.BIBTEXBROWSER_DEFAULT_FRAME?>" />
     </frameset>
     </html>
 
