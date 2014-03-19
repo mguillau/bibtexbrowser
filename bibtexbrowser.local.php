@@ -6,17 +6,34 @@
 
 /** does nothing but calls method display() on the content and use javascript if needed. 
 */
-class JsWrapper {
-  function JsWrapper(&$content) {
-    echo $content->display();
-    if (BIBTEXBROWSER_USE_PROGRESSIVE_ENHANCEMENT) {
-      javascript();
-    }
+function JsWrapper(&$content) {
+  echo $content->display();
+  if (BIBTEXBROWSER_USE_PROGRESSIVE_ENHANCEMENT) {
+    javascript();
   }
 }
 
 
-function MGBibliographyStyle(&$bibentry) {
+function bib2links_with_icons(&$bibentry) {
+  $result = $bibentry->getBibLink('http://www.vision.ee.ethz.ch/%7emguillau/icons/bib.png');
+  // returns an empty string if no pdf present
+  $result .= $bibentry->getLink('pdf','http://www.vision.ee.ethz.ch/%7emguillau/icons/pdf.png');
+  // returns an empty string if no url present
+  $result .= $bibentry->getLink('url','http://www.vision.ee.ethz.ch/%7emguillau/icons/url.png');
+  // returns an empty string if no slides present
+  $result .= $bibentry->getLink('slides','http://www.vision.ee.ethz.ch/%7emguillau/icons/slides.png');
+  // returns an empty string if no poster present
+  $result .= $bibentry->getLink('poster','http://www.vision.ee.ethz.ch/%7emguillau/icons/slides.png');
+  // Google Scholar ID. empty string if no gsid present
+  $result .= $bibentry->getGSLink('http://www.vision.ee.ethz.ch/%7emguillau/icons/google_scholar.png');
+  // returns an empty string if no doi present
+  $result .= $bibentry->getDoiLink('http://www.vision.ee.ethz.ch/%7emguillau/icons/doi.png');
+  $result .= "\n".'<hr style="visibility: hidden; height:0; clear:both;"/>';
+  return $result;
+}
+
+
+function MyBiblioStyle(&$bibentry) {
   $title = $bibentry->getTitle();
   $type = $bibentry->getType();
 
@@ -112,46 +129,34 @@ function MGBibliographyStyle(&$bibentry) {
   //$result .=  "\n".$bibentry->toCoins();
   $result .=  "<br/>\n";
 
-  // we add biburl and title to be able to retrieve this important information
-  // using Xpath expressions on the XHTML source
-  $result .= $bibentry->getBibLink();
-  // returns an empty string if no pdf present
-  $result .= $bibentry->getLink('pdf');
-  // returns an empty string if no url present
-  $result .= $bibentry->getLink('url');
-  // returns an empty string if no slides present
-  $result .= $bibentry->getLink('slides');
-  // returns an empty string if no poster present
-  $result .= $bibentry->getLink('poster');
-  // Google Scholar ID. empty string if no gsid present
-  $result .= $bibentry->getGSLink();
-  // returns an empty string if no doi present
-  $result .= $bibentry->getDoiLink();
-
-  $result .= '<hr style="visibility: hidden; height:0; clear:both;"/>';
-
   return $result;
 } // end style function
 
+
 /** Class to display a bibliography of a page. */
 class BibliographyDisplay  {
+
+  var $entries;
+
   function setDB(&$bibdatabase) { $this->setEntries($bibdatabase->bibdb); }
 
   /** sets the entries to be shown */
-  function setEntries(&$entries) { $this->entries = $entries; }
+  function setEntries(&$entries) {
+    $this->entries = $entries;
+  }
 
   function setTitle($title) { $this->title = $title; return $this; }
   function getTitle() { return @$this->title ; }
 
-  /** Displays a set of bibtex entries in an HTML table */
+  /** Displays a set of bibtex entries in an HTML format */
   function display() {
-    ksort($this->entries); // sort the keys, not the values
-    layoutHeaderHTML();
+    uasort($this->entries, 'compare_bib_entry_by_raw_abbrv');
+    print_header_layout();
     foreach ($this->entries as $ref => $bib) {
       $bib->setIndex($ref);
-      $bib->toHTML();
+      echo $bib->toHTML();
     } // end foreach
-    layoutFooterHTML();
+    print_footer_layout();
   } // end function
 } // end class
 

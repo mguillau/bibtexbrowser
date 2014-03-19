@@ -1,5 +1,7 @@
 <?php
 
+@define(ABBRV_TYPE,'keys-index');
+
 @define(BIBTEXBROWSER_REF_LEFT_QUOTATIONMARK,'&quot;');
 @define(BIBTEXBROWSER_REF_RIGHT_QUOTATIONMARK,'&quot;');
 @define(BIBTEXBROWSER_REF_UNKNOWN_KEY_TEXT,'Unknown key');
@@ -13,6 +15,7 @@
 @define(BIBTEXBROWSER_REF_REFERENCE_CLASS,'bibline');
 @define(BIBTEXBROWSER_REF_ACTIVE_REFERENCE_CLASS,'bibline-active');
 
+@define(BIBTEXBROWSER_REF_LINKIFY,'linkify');
 
 // Load the database without doing anything else
 $_GET['library']=1;
@@ -20,7 +23,7 @@ include( 'bibtexbrowser.php' );
 setDB();
 
 // Keep track of all citations and their reference id (depends on ABBRV_TYPE)
-$_GET['keys'] = array();
+$citations = array();
 
 // Function to create a link for a bibtex entry
 function linkify($txt,$a) {
@@ -57,10 +60,11 @@ function assoc_array_map($callback,$array) {
 /* Example:  As shown in <?php cite("MyBibtexEntry2013","MyOtherRef2013");?> , one can use bibtex within HTML/PHP.
 */
 function cite() {
+    global $citations;
     $DB = $_GET[Q_DB];
     $entries = func_get_args(); // list of bibtex entries to cite
     $refs = array(); // associate: abbrv txt => reference abbrv
-    $citations = $_GET['keys']; // existing associations: bibtex entries => reference abbrv
+    // $citations = $_GET['keys']; // existing associations: bibtex entries => reference abbrv
     // process argument list
     foreach ($entries as $entry) {
           $bib = $DB->getEntryByKey($entry);
@@ -68,8 +72,8 @@ function cite() {
              $ref = array(); // empty ref for detection by linkify, while getting last with sort()
              $refs[brokenAbbrv($entry)] = $ref;
           } else { // entry exists
-            if (ABBRV_TYPE != 'index') { // when not using index as abbrv, simply retrieve the abbrv from the database
-                $ref = $bib->getAbbrv();
+            if (ABBRV_TYPE != 'keys-index') { // when not using keys-index as abbrv, simply retrieve the abbrv from the database
+                $ref = $bib->getRawAbbrv();
                 $citations[$entry] = $ref;
             } else { // for the index abbrv, check if the entry is already associated with a reference number
               if ( array_key_exists ( $entry , $citations ) ) { // yes: use it
@@ -84,23 +88,22 @@ function cite() {
     }
     // output references
     asort( $refs ); // sort by abbrv
-    $links = assoc_array_map(linkify,$refs);
+    $links = assoc_array_map(BIBTEXBROWSER_REF_LINKIFY,$refs);
     echo BIBTEXBROWSER_REF_LEFT_CITATION_BRACKET;
     echo implode(BIBTEXBROWSER_REF_CITATION_SEPARATOR,$links);
     echo BIBTEXBROWSER_REF_RIGHT_CITATION_BRACKET;
-    $_GET['keys']=$citations;
+    //$_GET['keys']=$citations;
 }
 
 // Function to print out the table/list of references
 function make_bibliography() {
-    $bibfile = $_GET[Q_FILE]; // save bibfilename before resetting $_GET
-    $keys = json_encode(array_flip($_GET['keys']));
-    $_GET = array();
-    $_GET['bib'] = $bibfile;
-    $_GET['bibliography'] = 1; // also sets $_GET['assoc_keys']=1
-    $_GET['keys'] = $keys;
-    //print_r($_GET);
-    include( 'bibtexbrowser.php' );
+    global $citations;
+    $_GET[Q_INNER_KEYS_INDEX] = $citations;
+    $pd = new BibliographyDisplay();
+    $query = array('keys'=>array_flip($citations));
+    $entries = $_GET[Q_DB]->multisearch($query);
+    $pd->setEntries($entries);
+    $pd->display();
     if (BIBTEXBROWSER_REF_JAVASCRIPT_ENHANCEMENT) {
 ?>
 

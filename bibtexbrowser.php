@@ -131,12 +131,10 @@ function bibtexbrowser_configure($key, $value) {
 @define('Q_ENTRY', 'entry');
 @define('Q_KEY', 'key');
 @define('Q_KEYS', 'keys'); // filter entries using a url-encoded, JSON-encoded array of bibtex keys
-@define('Q_ASSOCKEYS', 'assoc_keys'); // consider Q_KEYS as an associative array, and use the keys of Q_KEYS as item abbrv
 @define('Q_SEARCH', 'search');
 @define('Q_EXCLUDE', 'exclude');
 @define('Q_RESULT', 'result');
 @define('Q_ACADEMIC', 'academic');
-@define('Q_BIBLIOGRAPHY', 'bibliography');
 @define('Q_DB', 'bibdb');
 @define('Q_LATEST', 'latest');
 @define('AUTHOR', 'author');
@@ -2383,9 +2381,6 @@ else $page = 1;
 if (!function_exists('query2title')) {
 /** transforms an array representing a query into a formatted string */
 function query2title(&$query) {
-    // special case
-    if (isset($query[Q_BIBLIOGRAPHY])) return 'Publications in ' . htmlspecialchars($_SERVER['PHP_SELF']);
-
     $headers = array();
     foreach($query as $k=>$v) {
       if($k == Q_INNER_AUTHOR) { $k = 'author'; }
@@ -3150,22 +3145,10 @@ class BibDataBase {
     if (count($query)<1) {return array();}
     if (isset($query[Q_ALL])) return array_values($this->bibdb);
 
-    if (array_key_exists( Q_KEYS, $query )) {
-      $keylist = (array) $query[Q_KEYS];
-      $reflist = array_flip($keylist);
-      $is_assoc = array_key_exists( Q_ASSOCKEYS, $query ); //array_values($query[Q_KEYS]) !== $query[Q_KEYS];
-      //if ($is_assoc) echo "Assoc";
-      //print_r($keylist);
-    } else {
-      $is_assoc = false;
-    }
-    unset($query[Q_ASSOCKEYS]); // not used for filtering the bibtex entries
-
     $result = array();
 
     foreach ($this->bibdb as $bib) {
         $entryisselected = true;
-        $akey = '';
         foreach ($query as $field => $fragment) {
           $field = strtolower($field);
           if ($field==Q_SEARCH) {
@@ -3207,13 +3190,7 @@ class BibDataBase {
 
         }
         if ($entryisselected) {
-          if ( $is_assoc ) {
-              $result[$reflist[$bib->getKey()]] = $bib;
-          } else {
-              $result[] = $bib;
-          }
-        } else {
-          //echo "entry ".$bib->getKey()." not selected\n";
+          $result[] = $bib;
         }
       }
       return $result;
@@ -3897,13 +3874,6 @@ class Dispatcher {
     } else { nonExistentBibEntryError(); } 
   }
 
-  function bibliography() {
-    $this->displayer='BibliographyDisplay';
-    $this->query[Q_ASSOCKEYS]=1;
-  }
-
-  function layout() { $this->query[LAYOUT]=$_GET[LAYOUT]; }
-
   function keys() {
     // Create array from list of bibtex entries
     if (get_magic_quotes_gpc()) {
@@ -3916,10 +3886,6 @@ class Dispatcher {
     // Keep a flipped version for efficient search in getRawAbbrv()
     $_GET[Q_INNER_KEYS_INDEX] = array_flip($_GET[Q_KEYS]);
     $this->query[Q_KEYS]=$_GET[Q_KEYS];
-  }
-
-  function assoc_keys() {
-    $this->query[Q_ASSOCKEYS]=$_GET[Q_ASSOCKEYS];
   }
 
   /** is used to remotely analyzed a situation */
