@@ -20,6 +20,7 @@ if (!defined('BIBTEXBROWSER')) {
 define('BIBTEXBROWSER','v__GITHUB__');
 
 // support for configuration
+// set with bibtexbrowser_configure, get with config_value
 // you may have bibtexbrowser_configure('ENCODING', 'latin1) in bibtexbrowser.local.php
 global $CONFIGURATION;
 $CONFIGURATION = array();
@@ -88,8 +89,8 @@ function bibtexbrowser_configure($key, $value) {
 
 // BIBTEXBROWSER_LINK_STYLE defines which function to use to display the links of a bibtex entry
 @define('BIBTEXBROWSER_LINK_STYLE','bib2links_default');
+
 // do we add [bibtex] links ?
-// suggested by Sascha Schnepp
 @define('BIBTEXBROWSER_BIBTEX_LINKS',true);
 // do we add [pdf] links ?
 @define('BIBTEXBROWSER_PDF_LINKS',true);
@@ -244,10 +245,11 @@ function _zetDB($bibtex_filenames) {
     $ext = pathinfo($bib, PATHINFO_EXTENSION);
     // this is a security protection
     if (BIBTEXBROWSER_LOCAL_BIB_ONLY && (!file_exists($bib) || strcasecmp($ext, 'bib') != 0)) {
-
-     // to automate dectection of faulty links with tools such as webcheck
-     header('HTTP/1.1 404 Not found');
-     die('<b>the bib file '.$bib.' does not exist !</b>');
+      // to automate dectection of faulty links with tools such as webcheck
+      header('HTTP/1.1 404 Not found');
+      // escape $bib to prevent XSS
+      $escapedBib = htmlEntities($bib, ENT_QUOTES);
+      die('<b>the bib file '.$escapedBib.' does not exist !</b>');
     }
   } // end for each
 
@@ -845,6 +847,17 @@ function char2html_case_sensitive($line,$latexmodifier,$char,$entitiyfragment) {
 (I still look for a comprehensive translation table from late chars to html, better than [[http://isdc.unige.ch/Newsletter/help.html]])
  */
 function latex2html($line) {
+
+  $maths = array();
+  $index = 0;
+  // first we escape the math env
+  preg_match_all('/\$.*?\$/', $line, $matches);
+  foreach ($matches[0] as $k) {
+    $maths[] = $k;
+    $line = str_replace($k, '__MATH'.$index.'__', $line);
+    $index++;
+  }
+    
   $line = preg_replace('/([^\\\\])~/','\\1&nbsp;', $line);
 
   // performance increases with this test
@@ -918,6 +931,11 @@ function latex2html($line) {
 // clean out extra tex curly brackets, usually used for preserving capitals
   $line = str_replace('}','', $line);
   $line = str_replace('{','', $line);
+
+  // we restore the math env
+  for($i = 0; $i < count($maths); $i++) {
+    $line = str_replace('__MATH'.$i.'__', $maths[$i], $line);
+  }
 
   return $line;
 }
@@ -1054,27 +1072,40 @@ class BibEntry {
     return BIBTEXBROWSER_URL.'?'.createQueryString(array(Q_KEY=>$this->getKey(), Q_FILE=>$this->filename));
   }
 
-  /** Read the bibtex field $bibfield and return a link with icon or text
+  /** @see bib2links(), kept for backward compatibility */
+  function bib2links() {
+    return bib2links($this);
+  }
+
+  /** Read the bibtex field $bibfield and return a link with icon (if $iconurl is given) or text
    * e.g. given the bibtex entry: @article{myarticle, pdf={myarticle.pdf}},
    * $bibtexentry->getLink('pdf') creates a link to myarticle.pdf using the text '[pdf]'.
-   * $bibtexentry->getLink($bibfield,$icon,$def) specifies the icon url $icon and default text $def.
+   * $bibtexentry->getLink('pdf','pdficon.png') returns &lt;a href="myarticle.pdf">&lt;img src="pdficon.png"/>&lt;/a>
+   * if you want a label that is different from the bibtex field, add a third parameter.
   */
-  function getLink($bibfield,$iconurl=NULL,$def=NULL) {
+  function getLink($bibfield,$iconurl=NULL,$altlabel=NULL) {
     $show = true;
-    if ( $bibfield === 'pdf' || $bibfield === 'url' ) { $show = BIBTEXBROWSER_PDF_LINKS; };
-    if ($def==NULL) { $def=$bibfield; }
-    $str = $this->getIconOrTxt($def,$iconurl);
-    if ( $show && $this->hasField($bibfield)) {
-       return ' <a'.(BIBTEXBROWSER_BIB_IN_NEW_WINDOW?' target="_blank" ':'').' href="'.$this->getField($bibfield).'">'.$str.'</a>';
+    if ($altlabel==NULL) { $altlabel=$bibfield; }
+    $str = $this->getIconOrTxt($altlabel,$iconurl);
+    if ($this->hasField($bibfield)) {
+       return '<a'.(BIBTEXBROWSER_BIB_IN_NEW_WINDOW?' target="_blank" ':'').' href="'.$this->getField($bibfield).'">'.$str.'</a>';
     }
     return '';
   }
 
-  /* a few specializations of getLink */
-
-  /** returns a "[url]" link if relevant. modified to exploit the new method, while keeping backward compatibility */ 
-  function getUrlLink() {
-    return $this->getLink('url');
+  /** returns a "[pdf]" link if relevant. modified to exploit the new method, while keeping backward compatibility */ 
+  function getUrlLink($iconurl = NULL, $label = 'pdf') {
+    if ($this->hasField('url')) {
+      return $this->getLink('url', $iconurl, $label);
+    }
+    if ($this->hasField('pdf')) {
+      return $this->getLink('pdf', $iconurl, $label);
+    }
+    // Adding link to PDF file exported by Zotero
+    // ref: https://github.com/monperrus/bibtexbrowser/pull/14 
+    if ($this->hasField('file')) {
+      return $this->getLink('file', $iconurl, $label);
+    }
   }
 
   /** returns a "[bib]" link if relevant */
@@ -1089,12 +1120,11 @@ class BibEntry {
     }
   }
 
-
   /** DOI are a special kind of links, where the url depends on the doi */
   function getDoiLink($iconurl=NULL) {
     $str = $this->getIconOrTxt('doi',$iconurl);
     if (BIBTEXBROWSER_DOI_LINKS && $this->hasField('doi')) {
-        return ' <a href="http://dx.doi.org/'.$this->getField('doi').'">'.$str.'</a>';
+        return '<a href="http://dx.doi.org/'.$this->getField('doi').'">'.$str.'</a>';
     }
     return '';
   }
@@ -1294,7 +1324,7 @@ class BibEntry {
   * Returns a compacted string form of author names by throwing away
   * all author names except for the first one and appending ", et al."
   */
-  function getCompactedAuthors($author){
+  function getCompactedAuthors(){
     $authors = $this->getRawAuthors();
     $etal = count($authors) > 1 ? ', et al.' : '';
     return $this->formatAuthor($authors[0]) . $etal;
@@ -1310,7 +1340,7 @@ class BibEntry {
     list($firstname, $lastname) = splitFullName($authors[0]);
     return $lastname . $etal;
   }
-
+  
   /** add the link to the homepage if it is defined in a string
    *  e.g. @string{hp_MartinMonperrus="http://www.monperrus.net/martin"}
    *  The string is a concatenation of firstname, lastname, prefixed by hp_ 
@@ -1464,8 +1494,14 @@ class BibEntry {
           $result .= $this->getAbbrv().'</dt><dd class="bibitem">';
           break;
       }
+
+
+      // may be overridden using configuration value of BIBLIOGRAPHYSTYLE
       $result .= bib2html($this);
-      $result .= bib2links($this);
+
+      // may be overridden using configuration value of BIBTEXBROWSER_LINK_STYLE
+      $result .= ' '.bib2links($this);
+
       switch(BIBTEXBROWSER_LAYOUT) { // close row
         case 'list':
           $result .= '</li>'."\n";
@@ -1527,7 +1563,7 @@ class BibEntry {
 
     // referent
     if ($this->hasField('url')) {
-      $url_parts[]='rft_id='.s3988($this->getField("url"));
+      $url_parts[]='rft_id='.s3988($this->getField('url'));
     } else if ($this->hasField('doi')) {
       $url_parts[]='rft_id='.s3988('info:doi/'.$this->getField("doi"));
     }
@@ -1547,10 +1583,8 @@ class BibEntry {
 
   /** Returns an anchor for this entry.  */
   function anchor() {
-        return '<a name="'.$this->getRawAbbrv().'"></a>';
+        return '<a class="bibanchor" name="'.$this->getRawAbbrv().'"></a>';
   }
-
-
 
    /**
    * rebuild the set of constants used if any as a string
@@ -1570,7 +1604,7 @@ class BibEntry {
   function toEntryUnformatted() {
     $result = "";
     $result .= '<pre class="purebibtex">'; // pre is nice when it is embedded with no CSS available
-    $entry = str_replace('<','&lt;',$this->getFullText());
+    $entry = htmlspecialchars($this->getFullText());
     if ($this->hasField('url')) {
       $url = $this->getField('url');
       // this is not a parsing but a simple replacement
@@ -1630,17 +1664,17 @@ function get_HTML_tag_for_layout() {
 function bib2links_default(&$bibentry) {
   $href = 'href="'.$bibentry->getURL().'"';
 
-  $str = '';
+  $str = '<span class="bibmenu">';
 
   if (BIBTEXBROWSER_BIBTEX_LINKS) {
     // we add biburl and title to be able to retrieve this important information
     // using Xpath expressions on the XHTML source
-    $str .= " <a".(BIBTEXBROWSER_BIB_IN_NEW_WINDOW?' target="_blank" ':'')." class=\"biburl\" title=\"".$bibentry->getKey()."\" {$href}>[bibtex]</a>";
+    $str .= "<a".(BIBTEXBROWSER_BIB_IN_NEW_WINDOW?' target="_blank" ':'')." class=\"biburl\" title=\"".$bibentry->getKey()."\" {$href}>[bibtex]</a>";
   }
 
   if (BIBTEXBROWSER_PDF_LINKS) {
     // returns an empty string if no url present
-    $str .= $bibentry->getUrlLink();
+    $str .= ' '.$bibentry->getUrlLink();
   }
 
   if (BIBTEXBROWSER_DOI_LINKS && $bibentry->hasField('doi')) {
@@ -1652,6 +1686,8 @@ function bib2links_default(&$bibentry) {
     $str .= ' <a href="http://scholar.google.com/scholar?cites='.$bibentry->getField("gsid").'">[cites]</a>';
   }
 
+  $str .= '</span>';
+  
   return $str;
 }
 
@@ -1821,7 +1857,7 @@ function DefaultBibliographyStyle(&$bibentry) {
   // title
   // usually in bold: .bibtitle { font-weight:bold; }
   $title = '<span class="bibtitle">'.$title.'</span>';
-  if ($bibentry->hasField('url')) $title = ' <a'.(BIBTEXBROWSER_BIB_IN_NEW_WINDOW?' target="_blank" ':'').' href="'.$bibentry->getField("url").'">'.$title.'</a>';
+  if ($bibentry->hasField('url')) $title = ' <a'.(BIBTEXBROWSER_BIB_IN_NEW_WINDOW?' target="_blank" ':'').' href="'.$bibentry->getField('url').'">'.$title.'</a>';
   
 
   // author
@@ -1891,7 +1927,7 @@ function DefaultBibliographyStyle(&$bibentry) {
 
   // some comments (e.g. acceptance rate)?
   if ($bibentry->hasField('comment')) {
-      $result .=  " (".$bibentry->getField("comment").")";
+      $result .=  " <span class=\"bibcomment\">(".$bibentry->getField("comment").")</span>";
   }
   if ($bibentry->hasField('note')) {
       $result .=  " (".$bibentry->getField("note").")";
@@ -1925,7 +1961,7 @@ function JanosBibliographyStyle(&$bibentry) {
 
   // title
   $title = '"'.$title.'"';
-  if ($bibentry->hasField('url')) $title = ' <a'.(BIBTEXBROWSER_BIB_IN_NEW_WINDOW?' target="_blank" ':'').' href="'.$bibentry->getField("url").'">'.$title.'</a>';
+  if ($bibentry->hasField('url')) $title = ' <a'.(BIBTEXBROWSER_BIB_IN_NEW_WINDOW?' target="_blank" ':'').' href="'.$bibentry->getField('url').'">'.$title.'</a>';
   $entry[] = $title;
 
 
@@ -2828,8 +2864,8 @@ class BibEntryDisplay {
         $result[] = array('citation_doi',$this->bib->getField("doi"));
       }
 
-      if ($this->bib->hasField("url")) {
-        $result[] = array('citation_pdf_url',$this->bib->getField("url"));
+      if ($this->bib->hasField('url')) {
+        $result[] = array('citation_pdf_url',$this->bib->getField('url'));
       }    
       
       if ($this->bib->hasField("pages")) {
@@ -2924,8 +2960,8 @@ class BibEntryDisplay {
       $result[] = array('eprints.id_number',$this->bib->getField("doi"));
     }
 
-    if ($this->bib->hasField("url")) {
-      $result[] = array('eprints.official_url',$this->bib->getField("url"));
+    if ($this->bib->hasField('url')) {
+      $result[] = array('eprints.official_url',$this->bib->getField('url'));
     }
     }
     // --------------------------------- END METADATA EPRINTS
